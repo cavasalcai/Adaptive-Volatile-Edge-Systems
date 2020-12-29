@@ -1,0 +1,58 @@
+---
+
+- hosts: all
+  become: true
+  tasks:
+
+  - name: "Update apt-get"
+    apt:
+      update_cache: yes
+      state: latest
+
+  - name: "Upgrade apt-get"
+    apt:
+      upgrade: dist
+      force_apt_get: yes
+      state: latest
+
+  - name: "Install required system packages"
+    apt:
+      name: "{{ item }}"
+      state: latest
+      update_cache: yes
+    loop:
+      [ 'apt-transport-https', 'ca-certificates', 'curl', 'software-properties-common', 'python3.7', 'python3-pip',
+        'virtualenv', 'python3-setuptools']
+
+  - name: "Add Docker GPG apt Key"
+    apt_key:
+      url: https://download.docker.com/linux/raspbian/gpg
+      state: present
+
+  - name: "Add Docker Repository"
+    apt_repository:
+      repo: deb https://download.docker.com/linux/raspbian buster stable
+      state: present
+
+  - name: "Install Docker-ce"
+    apt:
+      name: docker-ce
+      state: latest
+      update_cache: yes
+
+  - name: "Create Docker group"
+    group:
+      name: "docker"
+      state: present
+
+  - name: "Adding user pi to docker group"
+    user:
+      name: "pi"
+      groups: "docker"
+      append: "yes"
+
+  - name: "Reboot server in order for changes to take place"
+    shell: "sleep 1 && reboot"
+    async: 1
+    poll: 0
+...

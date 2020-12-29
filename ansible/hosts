@@ -1,0 +1,10 @@
+[raspberries]
+thor.local
+Hulk.local
+captain.local
+ironman.local
+batman.local
+
+[raspberries:vars]
+ansible_user=pi
+
