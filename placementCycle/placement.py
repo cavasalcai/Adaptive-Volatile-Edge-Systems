@@ -4,10 +4,24 @@ from pysmt.typing import INT, REAL
 import json
 import random
 import time
-from helpers_scripts.generate_input_files import *
+import socket
+import requests
+from requests.auth import HTTPBasicAuth
+# from helpers_scripts.generate_input_files import *
 
 
-def create_nodes_offers(app_file, topology_file):
+def check_alive(node):
+    """Check if node is alive"""
+    proto, host, port = node.split(':')
+    host = host.replace('//', '')
+    port = int(port)
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    result = sock.connect_ex((host, port))
+    return result == 0
+
+
+def create_nodes_pos_mappings(app_file, topology_file):
     """
     Create the possible mapping of microservice on each edge node.
     :param app_file: the JSON file where the model of the app is described
@@ -20,10 +34,10 @@ def create_nodes_offers(app_file, topology_file):
     with open("apps/" + app_file) as f:
         app_dict = json.load(f)
 
-    node_offers = {}
+    node_maps = {}
     for node in topology["IoTtopology"]["nodes"]:
-        node_offers[str(node['id'])] = [str(m['id']) for m in app_dict["IoTapplication"]["microservices"]]
-    return node_offers
+        node_maps[str(node['id'])] = [str(m['id']) for m in app_dict["IoTapplication"]["microservices"]]
+    return node_maps
 
 
 def get_topology(topology_file):
@@ -33,24 +47,36 @@ def get_topology(topology_file):
     :return: a dictionary where the key is a node and the value represents the resources and a list of failure rates
     for each node
     """
+    credentials = HTTPBasicAuth('user', 'requestaccess')
     node_resources = dict()
     nodes_failures = []
+
     with open("topologies/" + topology_file) as topo:
         topology = json.load(topo)
 
     topology_nodes = topology["IoTtopology"]["nodes"]
 
     for node in topology_nodes:
-        node_resources[str(node["id"])] = [int(node["RAM"]), int(node["HDD"]), int(node["CPU"])]
+        node_ip = node["ip"]
+        if check_alive(node_ip):
+            resp = requests.get(node_ip + '/get_resources', auth=credentials, timeout=20)
+            node_res = resp.json()
+            node_resources[str(node["id"])] = [int(node_res["RAM"]), int(node_res["HDD"])]
         nodes_failures.append((str(node["id"]), float(node['failure'])))
 
     return node_resources, nodes_failures
 
 
+def mb_to_bytes(mb: int) -> int:
+    """Convert a value given in MB to bytes"""
+    return mb * 1024 * 1024
+
+
 def get_application(app_file):
     """
-    :param app_file: the JSON file where the model of the app is described
-    :return: a dictionary where the key is a microservice and the value represents their resource requirements
+    :param app_file: the JSON file where the model of the app is described,
+                     the application's resource requirements are given in MB!!!
+    :return: a dictionary where the key is a microservice and the value represents their resource requirements in bytes
     """
     app_resources = dict()
     microservices = []
@@ -61,7 +87,7 @@ def get_application(app_file):
     avail = float(SLA["availability"])
 
     for micro in app_dict["IoTapplication"]["microservices"]:
-        app_resources[str(micro["id"])] = [int(micro["RAM"]), int(micro["HDD"]), int(micro["CPU"])]
+        app_resources[str(micro["id"])] = [mb_to_bytes(int(micro["RAM"])), mb_to_bytes(int(micro["HDD"]))]
         microservices.append(str(micro["id"]))
 
     return app_resources, avail, microservices
@@ -149,15 +175,16 @@ def create_objective(availabilities, app_avail):
     result = 1
     for elem in availabilities:
         result = result * elem
-    
+
     return GE(1 - result, Real(app_avail))
 
 
-def find_replication(microservice, nodes, availability_req):
+def find_replication(microservice, nodes, availability_req, nodes_availability):
     """
     :param microservice: the current microservice we want to replicate
     :param nodes: a dictionary where a key represents a microservice having the value a list of possible mapping nodes
     :param availability_req: the availability requirement of the deployed application
+    :param nodes_availability: a list of availability rate for each participant node
     :return: a strategy to map the microservice and its found replicas on the network
     """
     max_no_replicas = len(nodes[microservice])
@@ -202,7 +229,6 @@ def update_topology(old_topology, micros, app_res, microservice_mapping, flag):
         for n in microservice_mapping:
             old_topology[str(n)][0] = old_topology[str(n)][0] - app_res[micros][0]
             old_topology[str(n)][1] = old_topology[str(n)][1] - app_res[micros][1]
-            old_topology[str(n)][2] = old_topology[str(n)][2] - app_res[micros][2]
     return old_topology
 
 
@@ -220,7 +246,7 @@ def update_microservice_node_candidates(mapped_microservice, micro_candidates, m
             continue
         else:
             for n in micro_candidates[m]:
-                if application_res[m][0] <= topology[n][0] and application_res[m][1] <= topology[n][1] and application_res[m][2] <= topology[n][2]:
+                if application_res[m][0] <= topology[n][0] and application_res[m][1] <= topology[n][1]:
                     continue
                 else:
                     micro_candidates[m].remove(n)
@@ -229,6 +255,41 @@ def update_microservice_node_candidates(mapped_microservice, micro_candidates, m
 
 def millis():
     return int(round(time.time() * 1000))
+
+
+def start_placement(topology_file: str, application_file: str):
+    """Start to find a placement strategy that satisfies all objectives"""
+
+    topology, nodes_availability = get_topology(topology_file)
+    application_resources, availability_requirement, microservices_app = get_application(application_file)
+    node_possible_mappings = create_nodes_pos_mappings(application_file,
+                                      topology_file)
+
+    solution = {}
+
+    start_time = millis()
+    microservice_2_nodes = microservices_to_nodes(node_possible_mappings)
+    print(f'Start searching for a placement strategy...')
+    for m in microservices_app:
+        print(f'Current topology before placing {m} is: {topology}')
+        microservice_mapping = find_replication(m, microservice_2_nodes, availability_requirement, nodes_availability)
+        print(f'mapping = {microservice_mapping} for microservice {m}')
+        solution[m] = microservice_mapping
+        if len(microservice_mapping) == 0:
+            flag = True
+        else:
+            flag = False
+        topology = update_topology(topology, m, application_resources, microservice_mapping, flag)
+        print(f'Current topology after placing {m} is: {topology}')
+        # topology_new, _ = get_topology(topology_file)
+        microservice_2_nodes = update_microservice_node_candidates(m, microservice_2_nodes, microservices_app, topology,
+                                                                   application_resources)
+
+    print(f'time = {str(millis() - start_time)} ms')
+    print(f'Solution:')
+    for s in solution:
+        print(f'{s} = {solution[s]}')
+
 
 
 if __name__ == '__main__':
