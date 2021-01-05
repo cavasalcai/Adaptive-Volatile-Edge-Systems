@@ -4,43 +4,60 @@ from pysmt.typing import INT, REAL
 import random
 import json
 import time
+import subprocess
+import typing
 
 
-def find_topology_size(file_name):
+def find_topology(file_name):
     """
     Find the current topology size
     :param file_name: the name of the deployment input file
-    :return: the topology size and a dictionary to save the failure probabilities of each node
+    :return: the topology and a dictionary to save the failure probabilities of each node
     """
 
     nodes_failures = {}
 
     # read the JSON file containing the topology
-    with open('../topologies/' + file_name) as f:
+    with open('topologies/' + file_name) as f:
         topology = json.load(f)
 
     for node in topology["IoTtopology"]["nodes"]:
         nodes_failures[str(node['id'])] = float(node['failure'])
 
-    return len(topology["IoTtopology"]["nodes"]), nodes_failures
+    return topology["IoTtopology"]["nodes"], nodes_failures
+
+
+def find_latency(node: str):
+    """
+    Get the average latency of a node
+    :param node: the ip address of a node
+    :return: the average latency to communicate with the node, considering 10 pings
+    """
+    results = subprocess.run(['ping', '-c', '10', node], stdout=subprocess.PIPE).stdout.decode('utf-8')
+
+    return results.split('\n')[-2].split(' = ')[1].split('/')[1]
 
 
 def build_latency_dict(nodes):
     """
-    :param nodes: the number of nodes
+    :param nodes: the list of nodes
     :return: a dictionary containing the latencies between two nodes, where key is a string showing the
     communication link between two nodes, while the value represents the communication latency between them.
     """
     latencies = {}
-    # len_nodes = len(nodes)
-    for i in range(1, nodes):
-        for j in range(i + 1, nodes + 1):
+    len_nodes = len(nodes)
+    for i in range(1, len_nodes):
+        for j in range(i + 1, len_nodes + 1):
             s = str(i) + "-" + str(j)
             latencies[s] = random.choice(range(1, 10))
     return latencies
 
+    # for node in nodes:
+    #     node_ip = node['ip']
+    # ToDO: i need to add an APi so I can get the latency between all nodes!!!
 
-def getLatency(n1, n2, latency_dict):
+
+def get_latency(n1, n2, latency_dict):
     """
     :param n1: first node where a task is placed.
     :param n2: second node where a task is placed.
@@ -147,7 +164,7 @@ def create_task_facts(dependencies, tasks_on_nodes, latency_dict):
             for n1 in tasks_on_nodes[grp[0]]:
                 for n2 in tasks_on_nodes[grp[1]]:
                     task_facts.append(And(Equals(task(grp[0]), Int(int(n1))), Equals(task(grp[1]),
-                                    Int(int(n2)))).Implies(Equals(latency(grp[0], grp[1]), Int(getLatency(n1, n2, latency_dict)))))
+                                    Int(int(n2)))).Implies(Equals(latency(grp[0], grp[1]), Int(get_latency(n1, n2, latency_dict)))))
     return And(task_facts)
 
 
@@ -168,9 +185,8 @@ def find_tasks_on_nodes(deployment_solution):
     :return: a new dictionary containing a solution where key is a task and value is a list of nodes
     """
     tasks_on_nodes = {}
-    del deployment_solution['id']
     for task, nodes in deployment_solution.items():
-        tasks_on_nodes[str(task)] = [str(elem) for elem in json.loads(nodes)]
+        tasks_on_nodes[str(task)] = [str(elem) for elem in nodes]
 
     return tasks_on_nodes
 
@@ -205,149 +221,48 @@ def create_availability_objective(availabilities, app_avail):
 
 # A context (with-statment) lets python take care of creating and
 # destroying the solver.
-def self_adapt():
-    # solution_file_name = get_deployment_solution('deployment_case3_remember10')
-    solution_file_name = get_deployment_solution('deployment_case5_remember50')
-    topology_size, nodes_failures = find_topology_size('case5_app_50/topology_test_remember10.json')
-    latency_dict = build_latency_dict(topology_size)
+def self_adapt(solution, topology_file):
 
-    #parse the deployment solutions from the JSON file
-    with open(solution_file_name) as json_file:
-        deployment_solutions = json.load(json_file)
+    topology, nodes_failures = find_topology(topology_file)
+    latency_dict = build_latency_dict(topology)
 
     # read the JSON file containing the application description
-    with open("../apps/App_test5_remember50.json") as f:
+    with open("apps/webApplication.json") as f:
         app_dict = json.load(f)
 
     #create the three encodings for the SMT formula
     problem, latencies, dependencies, tasks = create_latency_constraint(app_dict)
-    stabilization_file = open('../results/stabilization/stabilization_case5_results_good', 'w+')
+    # stabilization_file = open('../results/stabilization/stabilization_case5_results_good', 'w+')
+
     # read every deployment solution and find a invocation chain
-    for solution in deployment_solutions['deployment_strategies']:
-        start_time = millis()
-        id = solution['id']
-        stabilization_file.write('<->' * 10 + '\r\n')
-        stabilization_file.write('Test number = ' + id + '\r\n')
-        tasks_on_nodes = find_tasks_on_nodes(solution)
-        task_facts = create_task_facts(dependencies, tasks_on_nodes, latency_dict)
-        task_possibilities = create_tasks_possibilities(tasks_on_nodes)
-        availability_enc, avail_obj = availability_encoding(tasks_on_nodes, nodes_failures)
-        problem_availability = create_availability_objective(avail_obj, app_dict["IoTapplication"]["SLA"]['availability'])
+    start_time = millis()
+    print(f'Starting to find an invocation chain...')
+    tasks_on_nodes = find_tasks_on_nodes(solution)
+    task_facts = create_task_facts(dependencies, tasks_on_nodes, latency_dict)
+    task_possibilities = create_tasks_possibilities(tasks_on_nodes)
+    availability_enc, avail_obj = availability_encoding(tasks_on_nodes, nodes_failures)
+    problem_availability = create_availability_objective(avail_obj, app_dict["IoTapplication"]["SLA"]['availability'])
 
-        # combine the encoding above to generate the SMT formula
-        f1 = task_possibilities.And(task_facts)
-        f2 = f1.And(availability_enc)
-        f3 = f2.And(problem_availability)
-        formula = f3.And(problem)
-        print('Solution number = {}'.format(id))
+    # combine the encoding above to generate the SMT formula
+    f1 = task_possibilities.And(task_facts)
+    f2 = f1.And(availability_enc)
+    f3 = f2.And(problem_availability)
+    formula = f3.And(problem)
 
-        invocation_path = set()
+    invocation_path = set()
 
-        with Solver() as solver:
-            solver.add_assertion(formula)
-            if solver.solve():
-                for t in tasks:
-                    stabilization_file.write("%s = %s \r\n" % (t, solver.get_value(t)))
-                    invocation_path.add(solver.get_value(t))
-                for l in latencies:
-                    stabilization_file.write("%s = %s \r\n" % (l, solver.get_value(l)))
-            else:
-                stabilization_file.write("No solution found \r\n")
-        stabilization_file.write('+' * 10 + '\r\n')
-        stabilization_file.write('time = ' + str(millis() - start_time) + ' ms' + '\r\n')
-        stabilization_file.write('+' * 10 + '\r\n')
-        # adapt_from_failure(invocation_path, tasks_on_nodes, dependencies, latency_dict, nodes_failures,
-        #  problem_availability, problem, tasks, latencies, app_dict)
-    stabilization_file.close()
-
-
-def adapt_from_failure(invocation_path, tasks_on_nodes, dependencies, latency_dict, nodes_failures,
-                       problem_availability, problem, tasks, latencies, app_dict):
-    """
-    A function that fails nodes and adapt to network changes by finding a new invocation path.
-    :param invocation_path: the first invocation path found with all nodes available
-    :param tasks_on_nodes: the location of tasks on nodes
-    """
-    stabilization_failure_file = open('../results/stabilization/stabilization_case6_results_Rfailure_not_sorted_e2e100', 'w+')
-    stabilization_failure_file.write('max_e2e_delay = {} \r\n'.format(app_dict["IoTapplication"]["SLA"]['e2e']))
-    test = 0
-    while invocation_path:
-        print('Test = ', test)
-        stabilization_failure_file.write('Failure recovery = {} \r\n'.format(test))
-        stabilization_failure_file.write('The invocation path before failure = {} \r\n'.format(invocation_path))
-        # randomly fail three nodes from invocation path
-        # failed_nodes = random.sample(invocation_path, 3)
-
-        # for tsk, nodes in tasks_on_nodes.items():
-        #     for failed_node in failed_nodes:
-        #         if str(failed_node) in nodes:
-        #             tasks_on_nodes[tsk].remove(str(failed_node))
-
-        # print('Failed 3 random nodes {}'.format(failed_nodes))
-        # print('Tasks_on_nodes = {}'.format(tasks_on_nodes))
-
-        # randomly select one node from the nodes with the highest failure probabilities from invocation path
-
-        # get the failure probabilities of every node found in the invocation path
-        # invocation_failures = []
-        # for node in invocation_path:
-        #     invocation_failures.append(nodes_failures[str(node)])
-        #
-        # sorted_failure_prob = sorted(invocation_failures)
-        # lowest_failure_prob = sorted_failure_prob[0]
-
-        # failed_node = -1
-        #
-        # for node in invocation_path:
-        #     if lowest_failure_prob == nodes_failures[str(node)]:
-        #         failed_node = str(node)
-        #         break
-
-        
-        # we fail one random node independent on what failure probability has
-        failed_node = str(random.choice(list(invocation_path)))
-
-        for tsk, nodes in tasks_on_nodes.items():
-            if failed_node in nodes:
-                    tasks_on_nodes[tsk].remove(failed_node)
-
-        stabilization_failure_file.write('Node = {} has failed \r\n'.format(failed_node))
-        # print('Failed node {}'.format(failed_node))
-        # print('Tasks_on_nodes = {}'.format(tasks_on_nodes))
-        stabilization_failure_file.write('Tasks_on_nodes after failure = {} \r\n'.format(tasks_on_nodes))
-
-        start_time = millis()
-
-        task_facts = create_task_facts(dependencies, tasks_on_nodes, latency_dict)
-        task_possibilities = create_tasks_possibilities(tasks_on_nodes)
-        availability_enc, avail_obj = availability_encoding(tasks_on_nodes, nodes_failures)
-
-        # combine the encoding above to generate the SMT formula
-        f1 = task_possibilities.And(task_facts)
-        f2 = f1.And(availability_enc)
-        f3 = f2.And(problem_availability)
-        formula = f3.And(problem)
-
-        invocation_path = set()
-        e2e = []
-        with Solver() as solver:
-            solver.add_assertion(formula)
-            if solver.solve():
-                for t in tasks:
-                    # print('{} = {}'.format(t, solver.get_value(t)))
-                    stabilization_failure_file.write("%s = %s \r\n" % (t, solver.get_value(t)))
-                    invocation_path.add(solver.get_value(t))
-                for l in latencies:
-                    stabilization_failure_file.write("%s = %s \r\n" % (l, solver.get_value(l)))
-                    e2e.append(int(str(solver.get_value(l))))  # convert from Fnode to str and then to int.
-                                                                # I cannot convert directly to int from Fnode
-            else:
-                stabilization_failure_file.write("No solution found \r\n")
-        stabilization_failure_file.write('e2e latency = {} \r\n'.format(sum(e2e)))
-        stabilization_failure_file.write('Time = {} \r\n'.format(millis() - start_time))
-        stabilization_failure_file.write('+' * 10 + '\r\n')
-        test += 1
-    stabilization_failure_file.close()
+    with Solver() as solver:
+        solver.add_assertion(formula)
+        if solver.solve():
+            for t in tasks:
+                print(f'{t} = {solver.get_value(t)}')
+                invocation_path.add(solver.get_value(t))
+            for l in latencies:
+                print(f'{l} = {solver.get_value(l)}')
+        else:
+            print("No solution found")
+    print(f'time =  {millis() - start_time} ms')
+    return invocation_path
 
 
 def millis():
