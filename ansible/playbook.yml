@@ -1,0 +1,92 @@
+---
+
+- hosts:
+    - Hulk.local
+    - captain.local
+    - ironman.local
+    - batman.local
+  become: yes
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+  tasks:
+
+    - name: "Update apt-get"
+      apt:
+        update_cache: yes
+        state: latest
+
+    - name: "Upgrade apt-get"
+      apt:
+        upgrade: dist
+        force_apt_get: yes
+        state: latest
+
+    - name: "Install required system packages"
+      apt:
+        name: "{{ item }}"
+        state: latest
+        update_cache: yes
+      loop:
+        [ 'apt-transport-https', 'ca-certificates', 'curl', 'software-properties-common', 'python3.7', 'python3-pip',
+          'virtualenv', 'python3-setuptools', 'vim' ]
+
+    - name: "Add Docker GPG apt Key"
+      apt_key:
+        url: https://download.docker.com/linux/raspbian/gpg
+        state: present
+
+    - name: "Add Docker Repository"
+      apt_repository:
+        repo: deb https://download.docker.com/linux/raspbian buster stable
+        state: present
+
+    - name: "Install Docker-ce"
+      apt:
+        name: docker-ce
+        state: latest
+        update_cache: yes
+
+    - name: "Create Docker group"
+      group:
+        name: "docker"
+        state: present
+
+    - name: "Adding user pi to docker group"
+      user:
+        name: "pi"
+        groups: "docker"
+        append: "yes"
+
+    - name: "Create a new dir for the venv"
+      file:
+        path: "./pi_venv"
+        state: "directory"
+
+    - name: "Send the requirements file"
+      synchronize:
+        src: "../requirements_nodes.txt"
+        dest: "/home/pi/pi_venv/"
+
+    - name: "Create a virtualenv with Python 3.7 and install requirements"
+      pip:
+        requirements: "/home/pi/pi_venv/requirements_nodes.txt"
+        virtualenv: "/home/pi/pi_venv"
+        virtualenv_python: "python3.7"
+
+    - name: "Send the node_api python file"
+      synchronize:
+        src: "../node_api.py"
+        dest: "/home/pi/pi_venv/"
+
+    - name: "Send the bash file"
+      synchronize:
+        src: "./run_node_api.sh"
+        dest: "/home/pi"
+
+    - name: "Give permission to execute bash file"
+      command: "chmod +x run_node_api.sh"
+
+    - name: "Run bash node_api script"
+      shell: "./run_node_api.sh"
+
+...
