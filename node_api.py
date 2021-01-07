@@ -5,11 +5,13 @@ import socket
 import sys
 import psutil
 import typing
+import subprocess
 from functools import wraps
 
 
 app = Flask(__name__)
 api = Api(app)
+nodes = []
 
 
 def get_ip():
@@ -48,27 +50,60 @@ def requires_auth(f):
     return decorated
 
 
+def find_latency(node: str):
+    """
+    Get the average latency of a node
+    :param node: the ip address of a node
+    :return: the average latency to communicate with the node, considering 10 pings
+    """
+    results = subprocess.run(['ping', '-c', '10', node], stdout=subprocess.PIPE).stdout.decode('utf-8')
+
+    return results.split('\n')[-2].split(' = ')[1].split('/')[1]
+
+
 @app.route('/get_resources', methods=['GET'])
 @requires_auth
 def get_resources():
     print(f'Getting nodes available resources...')
 
-    res = {}
-    res['RAM'] = psutil.virtual_memory().available
-    res['HDD'] = psutil.disk_usage('/').free
-    res['CPU'] = psutil.cpu_percent(interval=1, percpu=True)
-    res['CPU_cores'] = psutil.cpu_count()
-    res['CPU_logical_cores'] = psutil.cpu_count(logical=False)
-    # res['IP_local'] = psutil.net_connections().laddr
-    # res['IP_remote'] = psutil.net_connections().raddr
-    res['IP'] = get_ip()
+    res = {'RAM': psutil.virtual_memory().available,
+           'HDD': psutil.disk_usage('/').free,
+           'CPU': psutil.cpu_percent(interval=1, percpu=True),
+           'CPU_cores': psutil.cpu_count(),
+           'CPU_logical_cores': psutil.cpu_count(logical=False),
+           'IP': get_ip()}
 
     print(f'Done.')
-    print(f'Sending nodes available resources...')
+    print(f'Sending nodes available resources and latency...')
     return jsonify(res)
 
 
+@app.route('/nodes', methods=['POST'])
+@requires_auth
+def nodes_recv():
+    """Receive all nodes that are part of the network and find the latency"""
+    global nodes
 
+    nodes = request.get_json()
+    print(f'the received nodes are: {nodes}')
+    return 'ok'
+
+
+@app.route('/get_latency', methods=['GET'])
+@requires_auth
+def get_latency():
+
+    latency_dict = {}
+    print(f'Start finding the communication latency to all nodes in the network...')
+    print(f'the nodes are: {nodes}')
+
+    for node in nodes:
+        print(f'Getting the latency of node: {node["id"]} with id = {node["ip"]}')
+        _, ip, port = node['ip'].split(':')
+        ip = ip.replace('//', '')
+        latency_dict[node['id']] = find_latency(ip)
+
+    return jsonify(latency_dict)
 
 
 if __name__ == '__main__':
@@ -79,4 +114,4 @@ if __name__ == '__main__':
         port = 5000
     print(f'I am fognode {socket.gethostname()}, with address {get_ip()}')
 
-    app.run(host='127.0.0.1', port=port)
+    app.run(host=get_ip(), port=port)

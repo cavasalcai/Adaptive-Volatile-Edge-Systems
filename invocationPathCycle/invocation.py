@@ -6,39 +6,37 @@ import json
 import time
 import subprocess
 import typing
+import requests
+from requests.auth import HTTPBasicAuth
 
 
-def find_topology(file_name):
+def find_topology(nodes):
     """
     Find the current topology size
-    :param file_name: the name of the deployment input file
-    :return: the topology and a dictionary to save the failure probabilities of each node
+    :param nodes: the list of available nodes
+    :return: a dictionary to save the failure probabilities of each node
     """
 
     nodes_failures = {}
 
-    # read the JSON file containing the topology
-    with open('topologies/' + file_name) as f:
-        topology = json.load(f)
-
-    for node in topology["IoTtopology"]["nodes"]:
+    for node in nodes:
         nodes_failures[str(node['id'])] = float(node['failure'])
 
-    return topology["IoTtopology"]["nodes"], nodes_failures
+    return nodes_failures
 
 
-def find_latency(node: str):
+def find_latency(node_ip: str):
     """
     Get the average latency of a node
-    :param node: the ip address of a node
+    :param node_ip: the ip address of a node
     :return: the average latency to communicate with the node, considering 10 pings
     """
-    results = subprocess.run(['ping', '-c', '10', node], stdout=subprocess.PIPE).stdout.decode('utf-8')
+    results = subprocess.run(['ping', '-c', '10', node_ip], stdout=subprocess.PIPE).stdout.decode('utf-8')
 
     return results.split('\n')[-2].split(' = ')[1].split('/')[1]
 
 
-def build_latency_dict(nodes):
+def build_latency_dict_sim(nodes):
     """
     :param nodes: the list of nodes
     :return: a dictionary containing the latencies between two nodes, where key is a string showing the
@@ -52,26 +50,44 @@ def build_latency_dict(nodes):
             latencies[s] = random.choice(range(1, 10))
     return latencies
 
-    # for node in nodes:
-    #     node_ip = node['ip']
-    # ToDO: i need to add an APi so I can get the latency between all nodes!!!
+
+def build_latency_dict(nodes, credentials):
+    """
+    :param nodes: the list of nodes
+    :return: a dictionary containing the latencies between two nodes, where key is a string showing the
+    communication link between two nodes, while the value represents the communication latency between them.
+    """
+    latencies = {}
+    nodes_latencies = {}
+    print(f'List of nodes: {nodes}')
+
+    print(f'Send the topology to all nodes and get the latency')
+    for node in nodes:
+        resp_nodes = requests.post(node['ip'] + '/nodes', json=nodes, auth=credentials, timeout=100)
+        print(resp_nodes.status_code)
+        resp_latency = requests.get(node['ip'] + '/get_latency', auth=credentials, timeout=500)
+        latencies[node['id']] = resp_latency.json()
+
+    for src_id, latency_dict in latencies.items():
+        for dest_id, latency in latency_dict.items():
+            s = f'{src_id}-{dest_id}'
+            nodes_latencies[s] = int(float(latency))
+
+    return nodes_latencies
 
 
 def get_latency(n1, n2, latency_dict):
     """
-    :param n1: first node where a task is placed.
-    :param n2: second node where a task is placed.
+    :param n1: the source, where a task is placed.
+    :param n2: the destination, where a task is placed.
     :param latency_dict:  a dictionary containing the latency between dependent tasks
     :return: the latency between the two nodes, considering that the latency between n1_n2 == n2_n1.
     """
     if n1 == n2:
         latency = 0
     else:
-        s = str(n1) + "-" + str(n2)
+        s = f'{n1}-{n2}'
         if s in latency_dict:
-            latency = latency_dict[s]
-        else:
-            s = str(n2) + "-" + str(n1)
             latency = latency_dict[s]
     return latency
 
@@ -100,9 +116,6 @@ def get_deployment_solution(file_name):
                 if location == '[]':
                     continue
                 solution[tsk] = location
-                # if line.startswith('m' + app_size[8:]):
-                #     deployment_solutions.append(solution)
-                #     solution = {}
             if line.startswith('>>>>') and solution:
                 if len(solution) == int(app_size[8:]) + 1:
                     deployment_solutions.append(solution)
@@ -221,17 +234,14 @@ def create_availability_objective(availabilities, app_avail):
 
 # A context (with-statment) lets python take care of creating and
 # destroying the solver.
-def self_adapt(solution, topology_file):
+def self_adapt(solution, nodes, application, credentials):
 
-    topology, nodes_failures = find_topology(topology_file)
-    latency_dict = build_latency_dict(topology)
+    nodes_failures = find_topology(nodes)
+    latency_dict = build_latency_dict(nodes, credentials)
 
-    # read the JSON file containing the application description
-    with open("apps/webApplication.json") as f:
-        app_dict = json.load(f)
 
     #create the three encodings for the SMT formula
-    problem, latencies, dependencies, tasks = create_latency_constraint(app_dict)
+    problem, latencies, dependencies, tasks = create_latency_constraint(application)
     # stabilization_file = open('../results/stabilization/stabilization_case5_results_good', 'w+')
 
     # read every deployment solution and find a invocation chain
@@ -241,7 +251,7 @@ def self_adapt(solution, topology_file):
     task_facts = create_task_facts(dependencies, tasks_on_nodes, latency_dict)
     task_possibilities = create_tasks_possibilities(tasks_on_nodes)
     availability_enc, avail_obj = availability_encoding(tasks_on_nodes, nodes_failures)
-    problem_availability = create_availability_objective(avail_obj, app_dict["IoTapplication"]["SLA"]['availability'])
+    problem_availability = create_availability_objective(avail_obj, application["IoTapplication"]["SLA"]['availability'])
 
     # combine the encoding above to generate the SMT formula
     f1 = task_possibilities.And(task_facts)
@@ -271,4 +281,6 @@ def millis():
 
 if __name__ == '__main__':
 
-    self_adapt()
+    # self_adapt()
+    topology, nodes_failures = find_topology('topology_pi.json')
+    print(f'the latency dict is: {build_latency_dict(topology)}')
