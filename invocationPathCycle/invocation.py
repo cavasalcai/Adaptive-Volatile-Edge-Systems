@@ -83,12 +83,11 @@ def get_latency(n1, n2, latency_dict):
     :param latency_dict:  a dictionary containing the latency between dependent tasks
     :return: the latency between the two nodes, considering that the latency between n1_n2 == n2_n1.
     """
-    if n1 == n2:
-        latency = 0
-    else:
-        s = f'{n1}-{n2}'
-        if s in latency_dict:
-            latency = latency_dict[s]
+    print(f'The latency dict is: {latency_dict}')
+    s = f'{n1}-{n2}'
+    print(f'Looking for the following group: {s}')
+    if s in latency_dict:
+        latency = latency_dict[s]
     return latency
 
 
@@ -259,14 +258,14 @@ def self_adapt(solution, nodes, application, credentials):
     f3 = f2.And(problem_availability)
     formula = f3.And(problem)
 
-    invocation_path = set()
+    invocation_path = dict()
 
     with Solver() as solver:
         solver.add_assertion(formula)
         if solver.solve():
             for t in tasks:
                 print(f'{t} = {solver.get_value(t)}')
-                invocation_path.add(solver.get_value(t))
+                invocation_path[str(t)] = str(solver.get_value(t))
             for l in latencies:
                 print(f'{l} = {solver.get_value(l)}')
         else:

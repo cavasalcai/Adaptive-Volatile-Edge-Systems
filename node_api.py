@@ -7,6 +7,8 @@ import psutil
 import typing
 import subprocess
 from functools import wraps
+import docker
+import requests
 
 
 app = Flask(__name__)
@@ -54,11 +56,32 @@ def find_latency(node: str):
     """
     Get the average latency of a node
     :param node: the ip address of a node
-    :return: the average latency to communicate with the node, considering 10 pings
+    :return: the average latency to communicate with the node, considering 3 pings
     """
-    results = subprocess.run(['ping', '-c', '10', node], stdout=subprocess.PIPE).stdout.decode('utf-8')
+    results = subprocess.run(['ping', '-c', '3', node], stdout=subprocess.PIPE).stdout.decode('utf-8')
 
     return results.split('\n')[-2].split(' = ')[1].split('/')[1]
+
+
+@app.route('/start_docker_container', methods=['POST'])
+@requires_auth
+def start_docker_container():
+    # receive the information as a list [node_ip, image]
+    global node_ip
+    image, exposed_port, external_port = request.get_json()
+    print(f'I received the following: microservice = {image}, e_port = {external_port}, exp_port{exposed_port}')
+    client = docker.from_env()
+    container_id = client.containers.run(image, ports={exposed_port:external_port}, detach=True)
+    print(f'The container {container_id} is running!!!!')
+    return 'ok'
+
+
+# @app.route('/get_numbers', methods=['GET'])
+# @requires_auth
+# def get_numbers():
+#     resp = requests.get(node_ip + '/get_numbers', timeout=20)
+#     print(f'running on node: {node_ip} are: {resp.json()}')
+#     return jsonify(resp.json())
 
 
 @app.route('/get_resources', methods=['GET'])

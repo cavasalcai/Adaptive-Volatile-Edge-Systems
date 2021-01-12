@@ -190,7 +190,7 @@ def find_replication(microservice, nodes, availability_req, nodes_availability):
             if solver.solve():
                 for i in microservice_replicas:
                     # print("%s = %s" % (i, solver.get_value(i)))
-                    solution.append(solver.get_value(i))
+                    solution.append(str(solver.get_value(i)))
                 break
             # else:
                 # print("No solution found")

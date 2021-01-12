@@ -28,7 +28,6 @@ pytz==2020.5
 PyYAML==5.3.1
 requests==2.25.1
 six==1.15.0
-sshpass-wrapper==0.0.3
 urllib3==1.26.2
 websocket-client==0.57.0
 Werkzeug==1.0.1
