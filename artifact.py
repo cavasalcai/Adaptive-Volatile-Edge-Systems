@@ -26,6 +26,18 @@ def monitor_node_failure(node):
             return node
 
 
+def find_microservice_destinations(app):
+    """
+    Find for each microservice the message destination(s)
+    :param app: the application JSON dictionary
+    :return: a dictionary where key = microservice_id and value = a list of dependent microservices
+    """
+    microservices_dest = dict()
+    for m in app['IoTapplication']['microservices']:
+        microservices_dest[m['id'].split('/')[1]] = [m_id['id'].split('/')[1] for m_id in m['dest']]
+    return microservices_dest
+
+
 def find_topology(file_name):
     """
     Find the current topology
@@ -100,7 +112,7 @@ def start_all_containers(solution, microservices_ports, credentials, nodes_ip):
                                  timeout=1000)
 
 
-def start_application(invocation_path, nodes_ip, microservices_ports, app):
+def start_application_test(invocation_path, microservices_ports, nodes_ip, app):
     """Start the application considering the invocation path"""
 
     for m in app['IoTapplication']['microservices']:
@@ -130,12 +142,39 @@ def start_application(invocation_path, nodes_ip, microservices_ports, app):
             print(f'Finally, the results are {m4_res.json()}')
 
 
+def start_application(invocation_path, microservices_ports, microservices_dest, nodes_ip, credentials, failed_node):
+    """Start the application and get the results"""
+    print(f'Send the required knowledge to nodes')
+    for node_id, node_ip in nodes_ip.items():
+        if failed_node != node_id:
+            resp1 = requests.post(f'{node_ip}/microservices_dest', json=microservices_dest, auth=credentials, timeout=20)
+            resp2 = requests.post(f'{node_ip}/microservices_ports', json=microservices_ports, auth=credentials, timeout=20)
+            resp3 = requests.post(f'{node_ip}/invocation_path', json=invocation_path, auth=credentials, timeout=20)
+            resp4 = requests.post(f'{node_ip}/nodes_ips', json=nodes_ip, auth=credentials, timeout=20)
+
+    print(f'Starting the application....')
+    node = invocation_path['cosminava/m1']
+    port, _ = microservices_ports['cosminava/m1']
+    ip = nodes_ip[node].split(':')[1].replace('//', '')
+    numbers = requests.get('http://' + ip + ':' + port + '/start_app', timeout=2000)
+    print(f'The numbers considered are: {numbers.json()}')
+    print(f'Waiting for the results.....')
+    time.sleep(30)
+    node = invocation_path['cosminava/m4']
+    ip = nodes_ip[node]
+    print(f'Getting the results from {ip}/get_app_results')
+    m4_res = requests.get(f'{ip}/get_app_results', auth=credentials, timeout=2000)
+    print(f'The results are: {m4_res.json()}')
+    return m4_res.json()
+
+
 def main():
 
     credentials = HTTPBasicAuth('user', 'requestaccess')
     print(f'Starting placement cycle...')
     topology, nodes_to_ips = find_topology('topology_pi.json')
     app, microservice_ports = get_application('webApp.json')
+    microservices_dest = find_microservice_destinations(app)
     solution = start_placement(topology, credentials, app)
 
     print(f'The found solution is {solution}')
@@ -151,7 +190,11 @@ def main():
     print(f'Done. The invocation path is: {invocation_path}')
 
     print(f'Start the application according to the invocation path')
-    start_application(invocation_path, nodes_to_ips, microservice_ports, app)
+
+    result = start_application(invocation_path, microservice_ports, microservices_dest, nodes_to_ips, credentials, "")
+    # start_application_test(invocation_path, microservice_ports, nodes_to_ips, app)
+    print(f'App has finished, the result is: {result}')
+    # start_application(invocation_path, nodes_to_ips, microservice_ports, app)
     print(f'Starting the monitoring process...')
 
     nodes_ip = nodes_to_ips.values()
@@ -170,8 +213,9 @@ def main():
         print(f'Done. The invocation path is: {invocation_path}')
 
         print(f'ReStart the application according to the new invocation path')
-        start_application(invocation_path, nodes_to_ips, microservice_ports, app)
-
+        result = start_application(invocation_path, microservice_ports, microservices_dest, nodes_to_ips, credentials,
+                                   failed_node_id)
+        print(f'App has finished, the result is: {result}')
         print(f'Starting the monitoring process...')
     except KeyboardInterrupt:
         event.set()
