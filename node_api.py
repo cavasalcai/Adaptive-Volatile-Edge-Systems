@@ -81,14 +81,6 @@ def start_docker_container():
     return 'ok'
 
 
-# @app.route('/get_numbers', methods=['GET'])
-# @requires_auth
-# def get_numbers():
-#     resp = requests.get(node_ip + '/get_numbers', timeout=20)
-#     print(f'running on node: {node_ip} are: {resp.json()}')
-#     return jsonify(resp.json())
-
-
 @app.route('/get_resources', methods=['GET'])
 @requires_auth
 def get_resources():
@@ -185,19 +177,18 @@ def listening():
     """Receive the output of local containers and forward it to destination nodes"""
     print(f'I am in the listening_containers !!!!!')
     container_id, recv_msg = request.get_json()
-    print(f'Received the first message {recv_msg} from {container_id}')
-    print(f'Send the message to all dependent microservices')
-    for m in microservices_dest[container_id]:
-        print(f'Sending message to dependent microservice: {m}')
-        image_microservice = f'cosminava/{m}'
+    print(f'Received the message {recv_msg} from {container_id}')
+    if container_id != 'last':
+        dest_microservice = microservices_dest[container_id][0]
+        print(f'Sending message to dependent microservice: {dest_microservice}')
+        image_microservice = f'cosminava/{dest_microservice}'
         node = invocation_path[image_microservice]
         print(f'Sending message to target node ip: {nodes_ips[node]}/forward_msgs')
-        resp = requests.post(f'{nodes_ips[node]}/forward_msgs', json=(container_id, m, recv_msg), timeout=20)
-    if not microservices_dest[container_id]:
-        print(f'Application has finished, getting the results...')
-        port, _ = microservices_ports[f'cosminava/{container_id}']
-        app_res = requests.get(f'http://{LOCALHOST}:{port}/get_results', timeout=20)
-        app_results = app_res.json()
+        resp = requests.post(f'{nodes_ips[node]}/forward_msgs', json=(dest_microservice, recv_msg), timeout=20)
+    else:
+        print(f'The app has finished!!')
+        app_results = recv_msg
+        print(f'Finally got the results: {app_results}')
     return 'ok'
 
 
@@ -206,27 +197,12 @@ def forward_msg():
     global app_results
     """Forward the message to the local container"""
     print(f'I am in the forward_msgs !!!!!')
-    src_container_id, container_id, recv_msg = request.get_json()
-    print(f'Source container is: {src_container_id}')
-    print(f'Received the first message {recv_msg} to {container_id}')
+    container_id, recv_msg = request.get_json()
+    print(f'Sending the message {recv_msg} to {container_id}')
     print(f'Send the message to local container')
     port, _ = microservices_ports[f'cosminava/{container_id}']
-    path = container_id
-    if src_container_id == 'm2':
-        path = str(container_id) + '_odd'
-        print(f'the path is {path} when we are in {src_container_id}')
-    elif src_container_id == 'm3':
-        path = str(container_id) + '_even'
-        print(f'the path is {path} when we are in {src_container_id}')
-    print(f'the full path we use for m4 is: http://{LOCALHOST}:{port}/{path}')
-    if container_id == 'm4' and src_container_id == 'm3':
-        print(f'Finally got the results!!!!')
-        print(f'Get the results from: http://{LOCALHOST}:{port}/get_results')
-        app_res = requests.get(f'http://{LOCALHOST}:{port}/get_results', timeout=2000)
-        app_results = app_res.json()
-        print(f'The result is: {app_results}')
-    else:
-        resp = requests.post(f'http://{LOCALHOST}:{port}/{path}', json=recv_msg, timeout=2000)
+    print(f'the path is http://{LOCALHOST}:{port}/{container_id}')
+    resp = requests.post(f'http://{LOCALHOST}:{port}/{container_id}', json=recv_msg, timeout=2000)
 
     return 'ok'
 
@@ -235,13 +211,6 @@ def forward_msg():
 @requires_auth
 def get_results():
     return jsonify(app_results)
-
-
-# @app.route('/start_application', methods=['POST'])
-# @requires_auth
-# def start_application():
-#     """Start the application by accessing the first microservice of the application"""
-#     container_id = request.get_json()
 
 
 if __name__ == '__main__':

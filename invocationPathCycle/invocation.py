@@ -8,6 +8,7 @@ import subprocess
 import typing
 import requests
 from requests.auth import HTTPBasicAuth
+from placementCycle.placement import create_objective, microservice, availability
 
 
 def find_topology(nodes):
@@ -16,13 +17,11 @@ def find_topology(nodes):
     :param nodes: the list of available nodes
     :return: a dictionary to save the failure probabilities of each node
     """
-
-    nodes_failures = {}
-
+    nodes_failures_probs = {}
     for node in nodes:
-        nodes_failures[str(node['id'])] = float(node['failure'])
+        nodes_failures_probs[str(node['id'])] = float(node['failure'])
 
-    return nodes_failures
+    return nodes_failures_probs
 
 
 def find_latency(node_ip: str):
@@ -34,21 +33,6 @@ def find_latency(node_ip: str):
     results = subprocess.run(['ping', '-c', '10', node_ip], stdout=subprocess.PIPE).stdout.decode('utf-8')
 
     return results.split('\n')[-2].split(' = ')[1].split('/')[1]
-
-
-def build_latency_dict_sim(nodes):
-    """
-    :param nodes: the list of nodes
-    :return: a dictionary containing the latencies between two nodes, where key is a string showing the
-    communication link between two nodes, while the value represents the communication latency between them.
-    """
-    latencies = {}
-    len_nodes = len(nodes)
-    for i in range(1, len_nodes):
-        for j in range(i + 1, len_nodes + 1):
-            s = str(i) + "-" + str(j)
-            latencies[s] = random.choice(range(1, 10))
-    return latencies
 
 
 def build_latency_dict(nodes, credentials):
@@ -78,10 +62,10 @@ def build_latency_dict(nodes, credentials):
 
 def get_latency(n1, n2, latency_dict):
     """
-    :param n1: the source, where a task is placed.
-    :param n2: the destination, where a task is placed.
-    :param latency_dict:  a dictionary containing the latency between dependent tasks
-    :return: the latency between the two nodes, considering that the latency between n1_n2 == n2_n1.
+    :param n1: the source, where a microservice is placed.
+    :param n2: the destination, where a microservice is placed.
+    :param latency_dict:  a dictionary containing the latency between dependent microservices
+    :return: the latency between the two nodes.
     """
     print(f'The latency dict is: {latency_dict}')
     s = f'{n1}-{n2}'
@@ -99,7 +83,6 @@ def get_deployment_solution(file_name):
     """
     deployment_strategy = {}
     deployment_solutions = []
-
     #find the size of the application
     _, _, app_size = file_name.split('_')
 
@@ -127,108 +110,91 @@ def get_deployment_solution(file_name):
     return '../results/deployment/' + file_name + '_valid_solutions.json'
 
 
-def task(t1):
-    """ A macro method to create a SMT symbol of a single tasks"""
-    return Symbol("%s" % t1, INT)
-
-
-def availability(Rm1):
-    """A macro for creating a SMT symbol for the availability metric of a single microservice"""
-    return Symbol("Av_%s" % Rm1, REAL)
-
-
-def latency(t1, t2):
+def latency(m1, m2):
     """
-    :param t1: a symbol of a task.
-    :param t2: a symbol of a task.
+    :param m1: a symbol of a microservice.
+    :param m2: a symbol of a microservice.
     :return: return a SMT symbol for latency between two nodes.
     """
-    return Symbol("l_%s_%s" % (t1, t2), INT)
+    return Symbol("l_%s_%s" % (m1, m2), INT)
 
 
 def create_latency_constraint(app):
     """
     :param app: the job model graph.
-    :return: a list of latency encodings constraint.
+    :return: a list of latency encodings constraint, the latency objective, a list of dependencies between microservices,
+     and a list of microservices.
     """
     problem = []
     dependencies = []
-    tasks = []
-    for t1 in app["IoTapplication"]["microservices"]:
-        tasks.append(task(str(t1["id"])))
-        for d in t1["dest"]:
-            depend_tasks = []
-            problem.append(latency(str(t1["id"]), str(d["id"])))
-            depend_tasks.append(str(t1["id"]))
-            depend_tasks.append(str(d["id"]))
-            dependencies.append(depend_tasks)
-    return LE(Plus(problem), Int(int(app["IoTapplication"]["SLA"]['e2e']))), problem, dependencies, tasks
+    microservices = []
+    for m1 in app["IoTapplication"]["microservices"]:
+        microservices.append(microservice(str(m1["id"])))
+        for d in m1["dest"]:
+            depend_microservices = []
+            problem.append(latency(str(m1["id"]), str(d["id"])))
+            depend_microservices.append(str(m1["id"]))
+            depend_microservices.append(str(d["id"]))
+            dependencies.append(depend_microservices)
+    return LE(Plus(problem), Int(int(app["IoTapplication"]["SLA"]['e2e']))), problem, dependencies, microservices
 
 
-def create_task_facts(dependencies, tasks_on_nodes, latency_dict):
+def create_microservice_facts(dependencies, microservices_on_nodes, latency_dict):
     """
-    :param latency_dict:  a dictionary containing the latency between dependent tasks
-    :return: a SMT encoding containing the latency between two tasks.
+    :param dependencies:
+    :param microservices_on_nodes: a dictionary containing a solution where key is a microservice and value
+    is a list of nodes
+    :param latency_dict:  a dictionary containing the latency between dependent microservices
+    :return: a SMT encoding containing the latency between two microservices.
     """
-    task_facts = []
+    microservice_facts = []
     for grp in dependencies:
-        if grp[0] in tasks_on_nodes and grp[1] in tasks_on_nodes:
-            for n1 in tasks_on_nodes[grp[0]]:
-                for n2 in tasks_on_nodes[grp[1]]:
-                    task_facts.append(And(Equals(task(grp[0]), Int(int(n1))), Equals(task(grp[1]),
-                                    Int(int(n2)))).Implies(Equals(latency(grp[0], grp[1]), Int(get_latency(n1, n2, latency_dict)))))
-    return And(task_facts)
+        if grp[0] in microservices_on_nodes and grp[1] in microservices_on_nodes:
+            for n1 in microservices_on_nodes[grp[0]]:
+                for n2 in microservices_on_nodes[grp[1]]:
+                    microservice_facts.append(And(Equals(microservice(grp[0]), Int(int(n1))), Equals(microservice(grp[1]),
+                                    Int(int(n2)))).Implies(Equals(latency(grp[0], grp[1]),
+                                                                  Int(get_latency(n1, n2, latency_dict)))))
+    return And(microservice_facts)
 
 
-def create_tasks_possibilities(tasks_on_nodes):
+def create_microservices_possibilities(microservices_on_nodes):
     """
-    :return: a SMT encoding containing all task mapping possibilities.
+    :return: a SMT encoding containing all microservice mapping possibilities.
     """
-    tasks_possibilities = []
-    for t, nodes in tasks_on_nodes.items():
-        tasks_possibilities.append(Or(Equals(task(t), Int(int(n))) for n in nodes))
-    return And(tasks_possibilities)
+    microservices_possibilities = []
+    for m, nodes in microservices_on_nodes.items():
+        microservices_possibilities.append(Or(Equals(microservice(m), Int(int(n))) for n in nodes))
+    return And(microservices_possibilities)
 
 
-def find_tasks_on_nodes(deployment_solution):
+def find_microservices_on_nodes(deployment_solution):
     """
     Convert the JSON dict values from string to list
     :param deployment_solution: the deployment solution taken from the deployment JSON file
-    :return: a new dictionary containing a solution where key is a task and value is a list of nodes
+    :return: a new dictionary containing a solution where key is a microservice and value is a list of nodes
     """
-    tasks_on_nodes = {}
-    for task, nodes in deployment_solution.items():
-        tasks_on_nodes[str(task)] = [str(elem) for elem in nodes]
+    microservices_on_nodes = {}
+    for m, nodes in deployment_solution.items():
+        microservices_on_nodes[str(m)] = [str(elem) for elem in nodes]
 
-    return tasks_on_nodes
+    return microservices_on_nodes
 
 
-def availability_encoding(tasks_on_nodes, nodes_failures):
+def microservice_availability_encoding(microservices_on_nodes, nodes_failures):
     """
-    :param tasks_on_nodes: a dictionary containing the location of every tasks
+    :param microservices_on_nodes: a dictionary containing the location of every microservices
     :param nodes_failures: a dictionary where the failure rate of all nodes is stored
     :return: an encoding for discovering the availability of a microservice based on its allocation
     """
     encoding = list()
     avail_obj = list()
-    for t, nodes in tasks_on_nodes.items():
-        avail_obj.append(availability(task))
+    for m, nodes in microservices_on_nodes.items():
+        avail_obj.append(availability(m))
         for n in nodes:
-            encoding.append(Equals(task(t), Int(int(n))).Implies(Equals(availability(t), Real(float(1 - nodes_failures[n])))))
+            encoding.append(Equals(microservice(m), Int(int(n))).Implies(Equals(availability(m),
+                                                                                Real(float(1 - nodes_failures[n])))))
     return And(encoding), avail_obj
-
-
-def create_availability_objective(availabilities, app_avail):
-    """
-    :param availabilities: a list of all availability symbols
-    :param app_avail: the availability requirement of the deployed application
-    :return: the objective of our deployment
-    """
-    result = 1
-    for elem in availabilities:
-        result = result * elem
-
-    return GE(1 - result, Real(app_avail))
 
 
 # A context (with-statment) lets python take care of creating and
@@ -238,22 +204,19 @@ def self_adapt(solution, nodes, application, credentials):
     nodes_failures = find_topology(nodes)
     latency_dict = build_latency_dict(nodes, credentials)
 
-
     #create the three encodings for the SMT formula
-    problem, latencies, dependencies, tasks = create_latency_constraint(application)
-    # stabilization_file = open('../results/stabilization/stabilization_case5_results_good', 'w+')
+    problem, latencies, dependencies, microservices = create_latency_constraint(application)
 
-    # read every deployment solution and find a invocation chain
     start_time = millis()
     print(f'Starting to find an invocation chain...')
-    tasks_on_nodes = find_tasks_on_nodes(solution)
-    task_facts = create_task_facts(dependencies, tasks_on_nodes, latency_dict)
-    task_possibilities = create_tasks_possibilities(tasks_on_nodes)
-    availability_enc, avail_obj = availability_encoding(tasks_on_nodes, nodes_failures)
-    problem_availability = create_availability_objective(avail_obj, application["IoTapplication"]["SLA"]['availability'])
+    microservices_on_nodes = find_microservices_on_nodes(solution)
+    microservice_facts = create_microservice_facts(dependencies, microservices_on_nodes, latency_dict)
+    microservice_possibilities = create_microservices_possibilities(microservices_on_nodes)
+    availability_enc, avail_obj = microservice_availability_encoding(microservices_on_nodes, nodes_failures)
+    problem_availability = create_objective(avail_obj, application["IoTapplication"]["SLA"]['availability'])
 
     # combine the encoding above to generate the SMT formula
-    f1 = task_possibilities.And(task_facts)
+    f1 = microservice_possibilities.And(microservice_facts)
     f2 = f1.And(availability_enc)
     f3 = f2.And(problem_availability)
     formula = f3.And(problem)
@@ -263,9 +226,9 @@ def self_adapt(solution, nodes, application, credentials):
     with Solver() as solver:
         solver.add_assertion(formula)
         if solver.solve():
-            for t in tasks:
-                print(f'{t} = {solver.get_value(t)}')
-                invocation_path[str(t)] = str(solver.get_value(t))
+            for m in microservices:
+                print(f'{m} = {solver.get_value(m)}')
+                invocation_path[str(m)] = str(solver.get_value(m))
             for l in latencies:
                 print(f'{l} = {solver.get_value(l)}')
         else:
@@ -276,10 +239,3 @@ def self_adapt(solution, nodes, application, credentials):
 
 def millis():
     return int(round(time.time() * 1000))
-
-
-if __name__ == '__main__':
-
-    # self_adapt()
-    topology, nodes_failures = find_topology('topology_pi.json')
-    print(f'the latency dict is: {build_latency_dict(topology)}')

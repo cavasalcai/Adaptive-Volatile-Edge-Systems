@@ -1,10 +1,9 @@
 [raspberries]
-thor.local
-Hulk.local
-captain.local
-ironman.local
-batman.local
+node1  ansible_host=node_ip
+node2  ansible_host=node_ip
+node3  ansible_host=node_ip
+node4  ansible_host=node_ip
 
 [raspberries:vars]
-ansible_user=pi
+ansible_user=username_of_nodes
 

@@ -1,0 +1,14 @@
+{"IoTapplication": {
+		"SLA": {"e2e": "200", "availability": 0.60},
+		"microservices": [
+			{"id": "cosminava/m1", "RAM": "200", "HDD": "900", "container_port": "5010", "external_port":  "8881",
+				"dest": [{"id": "cosminava/m2"}]},
+			{"id": "cosminava/m2", "RAM": "370", "HDD": "900", "container_port": "5020", "external_port":  "8882",
+				"dest": [{"id": "cosminava/m3"}]},
+			{"id": "cosminava/m3", "RAM": "500", "HDD": "900", "container_port": "5030", "external_port":  "8883",
+				"dest": [{"id": "cosminava/m4"}]},
+			{"id": "cosminava/m4", "RAM": "120", "HDD": "900", "container_port": "5040", "external_port":  "8884",
+				"dest": []}
+		]
+}}
+

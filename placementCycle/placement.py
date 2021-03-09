@@ -7,7 +7,6 @@ import time
 import socket
 import requests
 from requests.auth import HTTPBasicAuth
-# from helpers_scripts.generate_input_files import *
 
 
 def check_alive(node):
@@ -192,14 +191,7 @@ def find_replication(microservice, nodes, availability_req, nodes_availability):
                     # print("%s = %s" % (i, solver.get_value(i)))
                     solution.append(str(solver.get_value(i)))
                 break
-            # else:
-                # print("No solution found")
         count_replicas += 1
-
-        # print("First encoding - micro_const", micro_const)
-        # print("Second encoding - availability const", availability_constraint)
-        # print("Third encoding - microservice_const", microservice_constraint)
-
     return solution
 
 
@@ -233,7 +225,8 @@ def update_microservice_node_candidates(mapped_microservice, micro_candidates, m
             continue
         else:
             for n in micro_candidates[m]:
-                if application_res[m][0] <= topology[n][0] and application_res[m][1] <= topology[n][1]:
+                if application_res[m][0] <= topology[n][0] and\
+                        application_res[m][1] <= topology[n][1]:
                     continue
                 else:
                     micro_candidates[m].remove(n)
@@ -253,7 +246,6 @@ def start_placement(nodes, credentials, application):
                                       nodes)
 
     solution = {}
-
     start_time = millis()
     microservice_2_nodes = microservices_to_nodes(node_possible_mappings)
     print(f'Start searching for a placement strategy...')
@@ -276,67 +268,3 @@ def start_placement(nodes, credentials, application):
         print(f'{s} = {solution[s]}')
     return solution
 
-
-
-if __name__ == '__main__':
-
-    app_size = 7
-    top_size = 50
-    i = 0
-    topology_folder = 'case6_app_7/'
-    deployment_case = 'Failure_less_res_new98'
-    app_file_name = 'App_newTest4_remember'
-
-    # create_application_file(app_file_name + str(app_size) + '.json', app_size, 350, 0.85, [5, 18])
-    # create_topology_file(topology_folder + 'topology_failure_remember' + str(top_size) + '.json', top_size, [50, 80], False, i)
-
-    while i < 1:
-
-        # topology, nodes_availability = get_topology(topology_folder + 'topology_failure_remember' + str(top_size) + '.json')
-        # application_resources, availability_requirement, microservices_app = get_application(app_file_name + str(app_size) + '.json')
-        # node_offers = create_nodes_offers(app_file_name + str(app_size) + '.json',
-        #                                   topology_folder + 'topology_failure_remember' + str(top_size) + '.json')
-        topology, nodes_availability = get_topology(
-            topology_folder + 'topology_failure_remember' + str(top_size) + '.json')
-        application_resources, availability_requirement, microservices_app = get_application('webApplication.json')
-        node_offers = create_nodes_offers('webApplication.json',
-                                          topology_folder + 'topology_failure_remember' + str(top_size) + '.json')
-
-
-        solution = {}
-
-        print('Running test = {} for app_size = {} and top_size = {}'.format(i, app_size, top_size))
-        f = open('results/deployment/deployment_' + deployment_case + '_remember' + str(app_size) + '.txt', 'a+')
-        f.write('>>' * 15 + '\r\n')
-        f.write('>>' * 15 + '\r\n')
-        f.write('test = ' + str(i) + '\r\n')
-        f.write('app_size = ' + str(app_size) + '\r\n')
-        f.write('topology_size = ' + str(top_size) + '\r\n')
-        f.write('=' * 15 + '\r\n')
-        f.write('=' * 15 + '\r\n')
-        start_time = millis()
-        microservice_2_nodes = microservices_to_nodes(node_offers)
-        for m in microservices_app:
-            # f.write('=' * 15 + '\r\n')
-            # f.write("microservice = " + str(m) + '\r\n')
-            # f.write("microservices = " + str(microservice_2_nodes) + '\r\n')
-            # f.write("topology before mapping = " + str(topology) + '\r\n')
-            microservice_mapping = find_replication(m, microservice_2_nodes, availability_requirement)
-            # f.write("mapping = " + str(microservice_mapping) + '\r\n')
-            solution[m] = microservice_mapping
-            if len(microservice_mapping) == 0:
-                flag = True
-            else:
-                flag = False
-            topology = update_topology(topology, m, application_resources, microservice_mapping, flag)
-            microservice_2_nodes = update_microservice_node_candidates(m, microservice_2_nodes, microservices_app, topology, application_resources)
-        f.write('=' * 15 + '\r\n')
-        f.write('time =  ' + str(millis() - start_time) + ' ms' + '\r\n')
-        f.write('+' * 10 + '\r\n')
-        for s in solution:
-            f.write( str(s) + ' = ' + str(solution[s]) + '\r\n')
-        # f.write('final topology = ' + str(topology) + '\r\n')
-        # f.write('+' * 10 + '\r\n')
-        f.close()
-        i += 1
-        # create_topology_file(topology_folder + 'topology_failure_remember' + str(top_size) + '.json', top_size, [50, 80], True, i)
