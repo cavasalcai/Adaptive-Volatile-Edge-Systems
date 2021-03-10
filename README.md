@@ -8,8 +8,14 @@ Monitoring functionality is responsible for detecting the status of nodes in the
 ### Prepare the target edge system 
 
 Use either the provided Ansible playbook to configure the available physical edge nodes like Raspberry Pis or start each node on a different port on the localhost. 
-*  For the former, enter in the hosts file the IPs of each node and provide the user of each device. Then execute the playbook.
-*  For the latter, be sure that the localhost has all the requirements specified in the *requirements_nodes.txt*
+*  For the former, enter in the hosts file the IPs of each node and provide the user of each device. Then execute the playbook. Finally, go on each node and execute the *run_node_api.sh* on each individual node.
+```bash
+./run-node-api.sh
+```
+*  For the latter, be sure that the localhost has all the requirements specified in the *requirements_nodes.txt*. Finally, start the node_api on a different port using: 
+```bash
+ python node-api.py <port_name>
+```
 
 ### Run the adaptive framework
 
